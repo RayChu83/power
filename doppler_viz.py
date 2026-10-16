@@ -9,6 +9,7 @@ import sounddevice as sd
 from matplotlib.animation import FuncAnimation
 
 from dsp import SpectrumAnalyzer
+from levels import Status, measure
 
 SPEED_OF_SOUND = 343.0  # m/s
 
@@ -114,13 +115,24 @@ def main():
     ax_shift.set_xlabel("Frames ago   (+ = toward mic, - = away)")
     ax_shift.grid(alpha=0.3)
     readout = ax_shift.text(0.01, 0.9, "", transform=ax_shift.transAxes, va="top", family="monospace")
+    alarm = ax_spec.text(
+        0.5, 0.5, "", transform=ax_spec.transAxes, ha="center", va="center",
+        fontsize=28, weight="bold", color="red",
+    )
 
     fig.tight_layout()
 
     def update(_):
         nonlocal history, shift_trace
-        frame = analyzer.process(engine.latest(args.nfft))
-        shift = frame.shift_hz
+        window = engine.latest(args.nfft)
+        levels = measure(window, args.rate, args.freq)
+        ok = levels.status is Status.OK
+        frame = analyzer.process(window)
+        if not ok:
+            # Frames without a carrier normalise noise to 0 dB and would swamp a real echo once the tone returns.
+            analyzer.reset()
+        # Without a carrier the normalised spectrum is just rescaled noise, so its shift is meaningless.
+        shift = frame.shift_hz if ok else 0.0
 
         history = np.roll(history, -1, axis=0)
         history[-1] = frame.spectrum_db
@@ -130,9 +142,14 @@ def main():
         line.set_ydata(frame.spectrum_db)
         img.set_data(history)
         shift_line.set_ydata(shift_trace)
-        velocity = shift * SPEED_OF_SOUND / (2 * args.freq)
-        readout.set_text(f"shift {shift:+7.1f} Hz  ~ {velocity:+.2f} m/s")
-        return line, img, shift_line, readout
+        level = f"carrier {levels.carrier_dbfs:6.1f} dBFS  snr {levels.snr_db:5.1f} dB"
+        if ok:
+            velocity = shift * SPEED_OF_SOUND / (2 * args.freq)
+            readout.set_text(f"shift {shift:+7.1f} Hz  ~ {velocity:+.2f} m/s   {level}")
+        else:
+            readout.set_text(f"shift    --- Hz  ~   --- m/s   {level}   {levels.status.value}")
+        alarm.set_text("" if ok else levels.status.value)
+        return line, img, shift_line, readout, alarm
 
     with AudioEngine(args) as engine:
         anim = FuncAnimation(fig, update, interval=40, blit=False, cache_frame_data=False)

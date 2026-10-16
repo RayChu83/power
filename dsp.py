@@ -34,6 +34,9 @@ class SpectrumAnalyzer:
         self.search = np.flatnonzero(np.abs(freqs - freq) <= lobe)
         self.smoothed = np.zeros(self.offsets.size)
 
+    def reset(self):
+        self.smoothed[:] = 0.0
+
     def process(self, x):
         xw = x * self.window
         carrier = self._locate_carrier(xw)
