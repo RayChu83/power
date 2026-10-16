@@ -8,6 +8,8 @@ import numpy as np
 import sounddevice as sd
 from matplotlib.animation import FuncAnimation
 
+from dsp import SpectrumAnalyzer
+
 SPEED_OF_SOUND = 343.0  # m/s
 
 
@@ -74,16 +76,9 @@ def main():
         print(sd.query_devices())
         return
 
-    nfft = args.nfft
-    pad = nfft * 4  # zero-pad for smoother peak interpolation
-    window = np.hanning(nfft).astype(np.float32)
-    freqs = np.fft.rfftfreq(pad, 1 / args.rate)
-    band = (freqs >= args.freq - args.span) & (freqs <= args.freq + args.span)
-    offsets = freqs[band] - args.freq  # Hz relative to carrier
-    guard_mask = np.abs(offsets) > args.guard
-
+    analyzer = SpectrumAnalyzer(args.rate, args.freq, args.span, args.nfft, args.guard)
+    offsets = analyzer.offsets
     history = np.full((args.history, offsets.size), -120.0)
-    smoothed = np.full(offsets.size, -120.0)
     shift_trace = np.zeros(args.history)
 
     fig, (ax_spec, ax_wf, ax_shift) = plt.subplots(
@@ -91,7 +86,7 @@ def main():
     )
     fig.suptitle(f"Live Doppler visualizer - carrier {args.freq:.0f} Hz")
 
-    (line,) = ax_spec.plot(offsets, smoothed, lw=1.2)
+    (line,) = ax_spec.plot(offsets, history[-1], lw=1.2)
     ax_spec.axvline(0, color="r", ls="--", lw=0.8, alpha=0.6)
     ax_spec.set_xlim(offsets[0], offsets[-1])
     ax_spec.set_ylim(-110, 0)
@@ -123,27 +118,16 @@ def main():
     fig.tight_layout()
 
     def update(_):
-        nonlocal history, smoothed, shift_trace
-        x = engine.latest(nfft)
-        mag = np.abs(np.fft.rfft(x * window, n=pad))[band]
-        db = 20 * np.log10(mag / nfft + 1e-9)
-        # Normalise to the carrier so the plot is volume/room independent.
-        db -= db[np.abs(offsets) <= args.guard].max()
-        smoothed = 0.6 * smoothed + 0.4 * db
-
-        # Net shift: power-weighted mean offset of the sidebands (carrier excluded),
-        # using only energy above a floor so noise doesn't drag it toward zero.
-        power = 10 ** (smoothed / 10)
-        power = np.where(guard_mask & (smoothed > -70), power, 0.0)
-        total = power.sum()
-        shift = float((offsets * power).sum() / total) if total > 0 else 0.0
+        nonlocal history, shift_trace
+        frame = analyzer.process(engine.latest(args.nfft))
+        shift = frame.shift_hz
 
         history = np.roll(history, -1, axis=0)
-        history[-1] = smoothed
+        history[-1] = frame.spectrum_db
         shift_trace = np.roll(shift_trace, -1)
         shift_trace[-1] = shift
 
-        line.set_ydata(smoothed)
+        line.set_ydata(frame.spectrum_db)
         img.set_data(history)
         shift_line.set_ydata(shift_trace)
         velocity = shift * SPEED_OF_SOUND / (2 * args.freq)
