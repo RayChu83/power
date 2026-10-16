@@ -1,3 +1,5 @@
+"""Live Doppler visualizer: plays a pilot tone and plots the echo spectrum."""
+
 import argparse
 import threading
 
