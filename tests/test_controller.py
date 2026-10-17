@@ -8,10 +8,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from actions import DEFAULT_BINDINGS, Scroll
 from dsp import Frame
-from gesture_app import TAPE_LEN, Controller
-from gestures import Dropout, Live, RecognizerParams, ThresholdRecognizer
+from gesture_app import TAPE_LEN, Controller, label_from_stdin
+from gestures import Dropout, Gesture, Live, RecognizerParams, ThresholdRecognizer
 from levels import Levels, Status
 from pipeline import Tick
+from trace import Label, load_trace, save_trace
 
 HOP_S = 0.04
 LOUD = 1e-3  # well above motion_on
@@ -96,6 +97,35 @@ def test_drain_returns_ticks_with_their_events_once():
 def test_tape_is_bounded():
     ctl, _ = run_script(idle(TAPE_LEN + 50))
     assert len(ctl.drain()) == TAPE_LEN
+
+
+def test_record_collects_every_observation_and_labels_round_trip():
+    import io
+    import tempfile
+
+    obs = idle(3) + burst(60.0, t0=0.12)
+    records = []
+    ctl = Controller(FakePipeline(obs), ThresholdRecognizer(RecognizerParams()), DEFAULT_BINDINGS, lambda a: None, record=records)
+    ctl.run(threading.Event())
+    assert records == obs, "every observation recorded in order"
+
+    ctl.last_t = 0.5
+    old_stdin, sys.stdin = sys.stdin, io.StringIO("p\nx\nL\n")
+    try:
+        label_from_stdin(ctl)
+    finally:
+        sys.stdin = old_stdin
+    assert records[len(obs):] == [Label(0.5, Gesture.PUSH), Label(0.5, Gesture.PULL)], records[len(obs):]
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "t.jsonl")
+        save_trace(path, records)
+        assert load_trace(path) == records
+
+
+def test_no_record_by_default():
+    ctl, _ = run_script(idle(3))
+    assert ctl.record is None
 
 
 if __name__ == "__main__":
