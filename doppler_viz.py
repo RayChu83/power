@@ -1,13 +1,13 @@
 """Live Doppler visualizer: plays a pilot tone and plots the echo spectrum."""
 
 import argparse
-import threading
 
 import matplotlib.pyplot as plt
 import numpy as np
 import sounddevice as sd
 from matplotlib.animation import FuncAnimation
 
+from audio import AudioEngine
 from dsp import SpectrumAnalyzer
 from levels import Status, measure
 
@@ -27,48 +27,6 @@ def parse_args():
     p.add_argument("--output-device", default=None, help="output device index or name")
     p.add_argument("--list-devices", action="store_true", help="print audio devices and exit")
     return p.parse_args()
-
-
-class AudioEngine:
-    """Full-duplex stream: emits a phase-continuous sine, buffers mic input."""
-
-    def __init__(self, args):
-        self.freq = args.freq
-        self.rate = args.rate
-        self.volume = args.volume
-        self.phase = 0.0
-        self.buf = np.zeros(args.rate * 2, dtype=np.float32)  # 2 s ring buffer
-        self.lock = threading.Lock()
-        self.stream = sd.Stream(
-            samplerate=args.rate,
-            channels=(1, 1),
-            dtype="float32",
-            device=(args.input_device, args.output_device),
-            callback=self._callback,
-        )
-
-    def _callback(self, indata, outdata, frames, time, status):
-        if status:
-            print("audio status:", status)
-        step = 2 * np.pi * self.freq / self.rate
-        ph = self.phase + step * np.arange(frames)
-        outdata[:, 0] = self.volume * np.sin(ph)
-        self.phase = (self.phase + step * frames) % (2 * np.pi)
-        with self.lock:
-            self.buf = np.roll(self.buf, -frames)
-            self.buf[-frames:] = indata[:, 0]
-
-    def latest(self, n):
-        with self.lock:
-            return self.buf[-n:].copy()
-
-    def __enter__(self):
-        self.stream.start()
-        return self
-
-    def __exit__(self, *exc):
-        self.stream.stop()
-        self.stream.close()
 
 
 def main():
@@ -151,7 +109,7 @@ def main():
         alarm.set_text("" if ok else levels.status.value)
         return line, img, shift_line, readout, alarm
 
-    with AudioEngine(args) as engine:
+    with AudioEngine(args.rate, args.freq, args.volume, (args.input_device, args.output_device)) as engine:
         anim = FuncAnimation(fig, update, interval=40, blit=False, cache_frame_data=False)
         print("Running. Wave a hand near the mic/trackpad. Close the window to quit.")
         plt.show()

@@ -111,6 +111,25 @@ def test_output_axis_has_fixed_length():
     assert frames[0].offsets[0] <= -SPAN + 5 and frames[0].offsets[-1] >= SPAN - 5, frames[0].offsets[[0, -1]]
 
 
+def settled_motion(**kw):
+    return run(**kw)[-1].motion
+
+
+def test_motion_is_small_with_no_echo():
+    m = settled_motion()
+    assert 0 <= m < 1e-4, m
+
+
+def test_motion_at_minus_40_db_echo_is_clearly_larger_than_idle():
+    assert settled_motion(echo_hz=110.0, echo_db=-40.0) > 20 * settled_motion()
+
+
+def test_motion_rises_with_echo_level():
+    m = [settled_motion(echo_hz=110.0, echo_db=db) for db in (-40.0, -30.0)]
+    assert m[0] < m[1], m
+    assert m[1] > 5 * m[0], m
+
+
 if __name__ == "__main__":
     tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

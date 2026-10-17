@@ -13,6 +13,7 @@ class Frame:
     spectrum_db: np.ndarray  # smoothed level per offset, 0 dB = carrier
     shift_hz: float  # net sideband shift, + = toward mic
     carrier_hz: float  # observed carrier this frame
+    motion: float  # carrier-relative sideband power (linear); ~1e-5 idle
 
 
 class SpectrumAnalyzer:
@@ -52,7 +53,7 @@ class SpectrumAnalyzer:
         side = np.where(self.sideband, self.smoothed, 0.0)
         total = side.sum()
         shift = float((self.offsets * side).sum() / total) if total > 0 else 0.0
-        return Frame(self.offsets, 10 * np.log10(self.smoothed + 1e-12), shift, carrier)
+        return Frame(self.offsets, 10 * np.log10(self.smoothed + 1e-12), shift, carrier, float(total))
 
     def _locate_carrier(self, xw):
         mag = np.abs(np.fft.rfft(xw, n=self.pad))
